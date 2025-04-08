@@ -1,82 +1,107 @@
-# app.py
 import streamlit as st
 import pandas as pd
-import matplotlib.pyplot as plt
-from datetime import datetime
 import math
+import matplotlib.pyplot as plt
+from io import StringIO
 
 st.set_page_config(page_title="Can I Afford This?", layout="centered")
 
-st.title("💸 Can I Afford This? – Budgeting App")
+st.title("💸 Can I Afford This?")
+st.markdown("A real-time lifestyle budgeting tool to help you make smarter purchase decisions.")
 
-# --- Input Fields ---
-income = st.number_input("Monthly Income ($)", min_value=0.0, step=100.0)
-expenses = st.number_input("Monthly Expenses ($)", min_value=0.0, step=100.0)
-balance = st.number_input("Current Bank Balance ($)", min_value=0.0, step=100.0)
-purchase = st.number_input("Purchase Amount ($)", min_value=0.0, step=50.0)
+# -------------------
+# Sidebar - Input
+# -------------------
+st.sidebar.header("User Inputs")
 
-use_emi = st.checkbox("Buy in EMI?")
+income = st.sidebar.number_input("Monthly Income ($)", min_value=0.0, value=3000.0)
+expenses = st.sidebar.number_input("Monthly Expenses ($)", min_value=0.0, value=2000.0)
+bank_balance = st.sidebar.number_input("Current Bank Balance ($)", min_value=0.0, value=500.0)
+purchase = st.sidebar.number_input("Purchase Amount ($)", min_value=0.0, value=120.0)
 
-if use_emi:
-    emi_months = st.number_input("EMI Duration (months)", min_value=1, step=1)
-    interest_rate = st.number_input("Interest Rate (% per year)", min_value=0.0, step=0.5)
+buy_emi = st.sidebar.checkbox("Buy in EMI?")
+emi_months = st.sidebar.number_input("EMI Duration (months)", min_value=1, value=6)
+interest_rate = st.sidebar.number_input("Interest Rate (% per year)", min_value=0.0, value=0.0)
 
-chart_type = st.selectbox("Choose Chart Type", ["Bar", "Pie"])
+chart_type = st.sidebar.selectbox("Choose Chart Type", ["Pie", "None"])
 
-# --- Session State for History ---
-if "history" not in st.session_state:
-    st.session_state.history = []
+# -------------------
+# Logic
+# -------------------
+result = ""
+leftover = 0
+emi_amount = 0
+history = []
 
-# --- Calculate Button ---
 if st.button("Can I Afford This?"):
-    emi_amount = 0
-    total_payable = purchase
+    monthly_leftover = income - expenses
+    r = (interest_rate / 100) / 12  # monthly interest rate
 
-    if use_emi:
-        r = interest_rate / 12 / 100
-        emi_amount = (purchase * r * math.pow(1 + r, emi_months)) / (math.pow(1 + r, emi_months) - 1)
-        total_payable = emi_amount * emi_months
+    if buy_emi:
+        if r == 0:
+            emi_amount = purchase / emi_months
+        else:
+            try:
+                emi_amount = (purchase * r * math.pow(1 + r, emi_months)) / (math.pow(1 + r, emi_months) - 1)
+            except ZeroDivisionError:
+                emi_amount = purchase / emi_months  # fallback
+        affordable = monthly_leftover - emi_amount >= 0
+        result = f"Your monthly EMI would be **${emi_amount:.2f}**"
+        leftover = monthly_leftover - emi_amount
+    else:
+        affordable = (monthly_leftover >= purchase) or (bank_balance >= purchase)
+        result = f"You are paying the full amount of **${purchase:.2f}**"
+        leftover = monthly_leftover - purchase
 
-    monthly_outflow = emi_amount if use_emi else purchase
-    leftover = income - expenses - monthly_outflow
-
-    result = "✅ You can afford this!" if leftover >= 0 else "❌ Not affordable right now."
-    st.markdown(f"### {result}")
-    st.write(f"**After this purchase, your monthly leftover would be:** ${leftover:.2f}")
-
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    if affordable:
+        st.success("✅ You can afford this!")
+    else:
+        st.error("❌ You cannot afford this right now.")
+    
+    st.markdown(f"### Result\n{result}")
+    st.markdown(f"**Monthly Leftover After Purchase:** ${leftover:.2f}")
+    
+    # Append to session history
+    if "history" not in st.session_state:
+        st.session_state.history = []
     st.session_state.history.append({
-        "Time": timestamp,
-        "Result": result,
+        "Income": income,
+        "Expenses": expenses,
+        "Purchase": purchase,
+        "Bank Balance": bank_balance,
+        "EMI": buy_emi,
+        "EMI Amount": round(emi_amount, 2) if buy_emi else 0,
         "Leftover": round(leftover, 2),
-        "Purchase": round(purchase, 2),
-        "Monthly EMI": round(emi_amount, 2) if use_emi else 0
+        "Interest %": interest_rate
     })
 
-    # --- Chart ---
-    labels = ['Income', 'Expenses', 'Leftover', 'Purchase']
-    values = [income, expenses, leftover, monthly_outflow]
+# -------------------
+# Show History
+# -------------------
+st.markdown("---")
+st.markdown("### 🧾 History")
 
-    fig, ax = plt.subplots()
-    if chart_type == "Bar":
-        ax.bar(labels, values, color=["green", "red", "blue", "orange"])
-    else:
-        ax.pie(values, labels=labels, autopct='%1.1f%%', colors=["green", "red", "blue", "orange"])
-        ax.axis("equal")
-    st.pyplot(fig)
-
-# --- History ---
-st.subheader("History")
-if st.session_state.history:
+if "history" in st.session_state and st.session_state.history:
     df = pd.DataFrame(st.session_state.history)
     st.dataframe(df)
 
-    csv = df.to_csv(index=False).encode('utf-8')
-    st.download_button("📁 Download CSV", csv, "history.csv", "text/csv", key='download-csv')
-
-    if st.button("🗑️ Clear History"):
+    if st.button("Clear History"):
         st.session_state.history = []
-        st.experimental_rerun()
-else:
-    st.write("No history yet.")
 
+    # CSV Download
+    csv = df.to_csv(index=False)
+    st.download_button("📥 Download CSV", data=csv, file_name="budget_history.csv", mime="text/csv")
+
+# -------------------
+# Pie Chart
+# -------------------
+if chart_type == "Pie" and "history" in st.session_state and st.session_state.history:
+    latest = st.session_state.history[-1]
+    labels = ["Expenses", "Leftover", "EMI" if latest["EMI"] else "Purchase"]
+    sizes = [latest["Expenses"], latest["Leftover"], latest["EMI Amount"] if latest["EMI"] else latest["Purchase"]]
+    colors = ["#FF9999", "#99FF99", "#9999FF"]
+
+    fig, ax = plt.subplots()
+    ax.pie(sizes, labels=labels, colors=colors, autopct="%1.1f%%", startangle=90)
+    ax.axis("equal")
+    st.pyplot(fig)
